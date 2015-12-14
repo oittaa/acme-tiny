@@ -4,8 +4,8 @@ This is a tiny, auditable script that you can throw on your server to issue
 and renew [Let's Encrypt](https://letsencrypt.org/) certificates. Since it has
 to be run on your server and have access to your private Let's Encrypt account
 key, I tried to make it as tiny as possible (currently less than 200 lines).
-The only prerequisites are Python and OpenSSL. Required minimum Python
-versions are 2.7.9 and 3.4.3.
+The only prerequisites are Python and OpenSSL. Also your Python must support
+`context` parameter in [urlopen](https://docs.python.org/3/library/urllib.request.html) function.
 
 **PLEASE READ THE SOURCE CODE! YOU MUST TRUST IT WITH YOUR PRIVATE KEYS!**
 
@@ -99,7 +99,7 @@ configure an nginx server:
 
 ```
 #NOTE: For nginx, you need to append the Let's Encrypt intermediate cert to your cert
-wget -O - https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem > intermediate.pem
+wget -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
 cat signed.crt intermediate.pem > chained.pem
 ```
 
