@@ -1,13 +1,11 @@
 # acme-tiny
 
-[![Build Status](https://travis-ci.org/diafygi/acme-tiny.svg)](https://travis-ci.org/diafygi/acme-tiny)
-[![Coverage Status](https://coveralls.io/repos/diafygi/acme-tiny/badge.svg?branch=master&service=github)](https://coveralls.io/github/diafygi/acme-tiny?branch=master)
-
 This is a tiny, auditable script that you can throw on your server to issue
 and renew [Let's Encrypt](https://letsencrypt.org/) certificates. Since it has
 to be run on your server and have access to your private Let's Encrypt account
 key, I tried to make it as tiny as possible (currently less than 200 lines).
-The only prerequisites are python and openssl.
+The only prerequisites are Python and OpenSSL. Required minimum Python
+versions are 2.7.9 and 3.4.3.
 
 **PLEASE READ THE SOURCE CODE! YOU MUST TRUST IT WITH YOUR PRIVATE KEYS!**
 
@@ -89,7 +87,7 @@ and read your private account key and CSR.
 
 ```
 #run the script on your server
-python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ > ./signed.crt
+python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ --output ./signed.crt
 ```
 
 ### Step 5: Install the certificate
@@ -146,8 +144,9 @@ for example script).
 Example of a `renew_cert.sh`:
 ```sh
 #!/usr/bin/sh
-python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ > /tmp/signed.crt || exit
-wget -O - https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem > intermediate.pem
+set -e
+python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output /tmp/signed.crt
+wget -q -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
 cat /tmp/signed.crt intermediate.pem > /path/to/chained.pem
 service nginx reload
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging
+import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging, ssl
 try:
     from urllib.request import urlopen # Python 3
 except ImportError:
@@ -32,9 +32,9 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     header = {
         "alg": "RS256",
         "jwk": {
-            "e": _b64(binascii.unhexlify(pub_exp)),
+            "e": _b64(binascii.unhexlify(pub_exp.encode("utf-8"))),
             "kty": "RSA",
-            "n": _b64(binascii.unhexlify(re.sub(r"(\s|:)", "", pub_hex))),
+            "n": _b64(binascii.unhexlify(re.sub(r"(\s|:)", "", pub_hex).encode("utf-8"))),
         },
     }
     accountkey_json = json.dumps(header['jwk'], sort_keys=True, separators=(',', ':'))
@@ -44,7 +44,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     def _send_signed_request(url, payload):
         payload64 = _b64(json.dumps(payload).encode('utf8'))
         protected = copy.deepcopy(header)
-        protected["nonce"] = urlopen(CA + "/directory").headers['Replay-Nonce']
+        protected["nonce"] = urlopen(CA + "/directory", context=ssl.create_default_context()).headers['Replay-Nonce']
         protected64 = _b64(json.dumps(protected).encode('utf8'))
         proc = subprocess.Popen(["openssl", "dgst", "-sha256", "-sign", account_key],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -56,7 +56,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
             "payload": payload64, "signature": _b64(out),
         })
         try:
-            resp = urlopen(url, data.encode('utf8'))
+            resp = urlopen(url, data.encode('utf8'), context=ssl.create_default_context())
             return resp.getcode(), resp.read()
         except IOError as e:
             return e.code, e.read()
@@ -133,7 +133,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         # wait for challenge to be verified
         while True:
             try:
-                resp = urlopen(challenge['uri'])
+                resp = urlopen(challenge['uri'], context=ssl.create_default_context())
                 challenge_status = json.loads(resp.read().decode('utf8'))
             except IOError as e:
                 raise ValueError("Error checking challenge: {0} {1}".format(
@@ -175,11 +175,11 @@ def main(argv):
             only ~200 lines, so it won't take long.
 
             ===Example Usage===
-            python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ > signed.crt
+            python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ --output signed.crt
             ===================
 
             ===Example Crontab Renewal (once per month)===
-            0 0 1 * * python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ > /path/to/signed.crt 2>> /var/log/acme_tiny.log
+            0 0 1 * * python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ --output /path/to/signed.crt 2>> /var/log/acme_tiny.log
             ==============================================
             """)
     )
@@ -188,11 +188,13 @@ def main(argv):
     parser.add_argument("--acme-dir", required=True, help="path to the .well-known/acme-challenge/ directory")
     parser.add_argument("--quiet", action="store_const", const=logging.ERROR, help="suppress output except for errors")
     parser.add_argument("--ca", default=DEFAULT_CA, help="certificate authority, default is Let's Encrypt")
+    parser.add_argument("--output", "-o", metavar="FILE", default=None, help="output file, default is standard output")
 
     args = parser.parse_args(argv)
     LOGGER.setLevel(args.quiet or LOGGER.level)
     signed_crt = get_crt(args.account_key, args.csr, args.acme_dir, log=LOGGER, CA=args.ca)
-    sys.stdout.write(signed_crt)
+    with open(args.output, 'w') if args.output else sys.stdout as f:
+        f.write(signed_crt)
 
 if __name__ == "__main__": # pragma: no cover
     main(sys.argv[1:])
