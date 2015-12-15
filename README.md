@@ -28,7 +28,7 @@ with the corresponding private key. If you don't understand what I just said,
 this script likely isn't for you! Please use the official Let's Encrypt
 [client](https://github.com/letsencrypt/letsencrypt).
 
-```
+```sh
 openssl genrsa 4096 > account.key
 ```
 
@@ -38,12 +38,12 @@ The ACME protocol (what Let's Encrypt uses) requires a CSR file to be submitted
 to it, even for renewals. You can use the same CSR for multiple renewals. NOTE:
 you can't use your account private key as your domain private key!
 
-```
+```sh
 #generate a domain private key (if you haven't already)
 openssl genrsa 4096 > domain.key
 ```
 
-```
+```sh
 #for a single domain
 openssl req -new -sha256 -key domain.key -subj "/CN=yoursite.com" > domain.csr
 
@@ -59,7 +59,7 @@ files in the folder you specify, so all you need to do is make sure that this
 folder is served under the ".well-known/acme-challenge/" url path. NOTE: This
 must be on port 80 (not port 443).
 
-```
+```sh
 #make some challenge folder (modify to suit your needs)
 mkdir -p /var/www/challenges/
 ```
@@ -79,13 +79,28 @@ server {
 }
 ```
 
+```apache
+#example for Apache 2.4
+<VirtualHost *:80>
+    ServerName yoursite.com
+    ServerAlias www.yoursite.com
+
+    Alias "/.well-known/acme-challenge" "/var/www/challenges"
+    <Directory "/var/www/challenges">
+        AllowOverride None
+    </Directory>
+
+    ...the rest of your config
+</VirtualHost>
+```
+
 ### Step 4: Get a signed certificate!
 
 Now that you have setup your server and generated all the needed files, run this
 script on your server with the permissions needed to write to the above folder
 and read your private account key and CSR.
 
-```
+```sh
 #run the script on your server
 python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ --output ./signed.crt
 ```
@@ -97,16 +112,17 @@ with your private key to run an https server. You need to include them in the
 https settings in your web server's configuration. Here's an example on how to
 configure an nginx server:
 
-```
+```sh
 #NOTE: For nginx, you need to append the Let's Encrypt intermediate cert to your cert
 wget -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
 cat signed.crt intermediate.pem > chained.pem
+openssl dhparam -out dhparam.pem 4096
 ```
 
 ```nginx
 server {
     listen 443;
-    server_name yoursite.com, www.yoursite.com;
+    server_name yoursite.com www.yoursite.com;
 
     ssl on;
     ssl_certificate /path/to/chained.pem;
@@ -115,7 +131,7 @@ server {
     ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
     ssl_ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA;
     ssl_session_cache shared:SSL:50m;
-    ssl_dhparam /path/to/server.dhparam;
+    ssl_dhparam /path/to/dhparam.pem;
     ssl_prefer_server_ciphers on;
 
     ...the rest of your config
@@ -123,7 +139,7 @@ server {
 
 server {
     listen 80;
-    server_name yoursite.com, www.yoursite.com;
+    server_name yoursite.com www.yoursite.com;
 
     location /.well-known/acme-challenge/ {
         alias /var/www/challenges/;
@@ -132,6 +148,41 @@ server {
 
     ...the rest of your config
 }
+```
+
+```apache
+#example for Apache 2.4
+SSLStaplingCache shmcb:/var/run/ocsp(128000)
+<VirtualHost *:443>
+    ServerName yoursite.com
+    ServerAlias www.yoursite.com
+
+    SSLEngine On
+    SSLProtocol all -SSLv2 -SSLv3
+    SSLHonorCipherOrder on
+    SSLUseStapling on
+    SSLStaplingResponderTimeout 5
+    SSLStaplingReturnResponderErrors off
+    SSLCertificateKeyFile /path/to/domain.key
+    SSLCertificateFile /path/to/chained.pem
+    SSLCipherSuite ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA
+    #If you DON'T have Apache 2.4.8 or later and OpenSSL 1.0.2 or later, comment out the following line
+    SSLOpenSSLConfCmd DHParameters /path/to/dhparam.pem
+
+    ...the rest of your config
+</VirtualHost>
+
+<VirtualHost *:80>
+    ServerName yoursite.com
+    ServerAlias www.yoursite.com
+
+    Alias "/.well-known/acme-challenge" "/var/www/challenges"
+    <Directory "/var/www/challenges">
+        AllowOverride None
+    </Directory>
+
+    ...the rest of your config
+</VirtualHost>
 ```
 
 ### Step 6: Setup an auto-renew cronjob
