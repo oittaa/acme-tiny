@@ -11,6 +11,7 @@ DEFAULT_CA = "https://acme-v01.api.letsencrypt.org"
 LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler())
 LOGGER.setLevel(logging.INFO)
+SHOW_WARNING = True
 
 def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     # helper function base64 encode for jose spec
@@ -18,15 +19,14 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         return base64.urlsafe_b64encode(b).decode('utf8').replace("=", "")
 
     # try to verify server certificates (2.7.9 or newer and 3.4.3 or newer)
-    show_insecure_warning = True
     def _try_secure_urlopen(url, data=None):
-        nonlocal show_insecure_warning
+        global SHOW_WARNING
         try:
             return urlopen(url, data, context=ssl.create_default_context())
         except (AttributeError, TypeError):
             if show_insecure_warning:
                 log.warning("Your Python version is insecure! It can't verify server certificates! Please consider upgrading your Python interpreter. Secure minimum versions are 2.7.9 and 3.4.3 for Python 2 and Python 3 respectively.")
-                show_insecure_warning = False
+                SHOW_WARNING = False
             return urlopen(url, data)
 
     # parse account key to get public key
