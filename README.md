@@ -4,8 +4,7 @@ This is a tiny, auditable script that you can throw on your server to issue
 and renew [Let's Encrypt](https://letsencrypt.org/) certificates. Since it has
 to be run on your server and have access to your private Let's Encrypt account
 key, I tried to make it as tiny as possible (currently less than 200 lines).
-The only prerequisites are Python and OpenSSL. Also your Python must support
-`context` parameter in [urlopen](https://docs.python.org/3/library/urllib.request.html) function.
+The only prerequisites are Python and OpenSSL.
 
 **PLEASE READ THE SOURCE CODE! YOU MUST TRUST IT WITH YOUR PRIVATE KEYS!**
 
@@ -196,10 +195,12 @@ Example of a `renew_cert.sh`:
 ```sh
 #!/bin/sh
 set -e
-python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output /tmp/signed.crt
+TMPCRT=$(mktemp)
+python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "$TMPCRT"
 wget -q -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
-cat /tmp/signed.crt intermediate.pem > /path/to/chained.pem
-service nginx reload
+cat "$TMPCRT" intermediate.pem > /path/to/chained.pem
+rm -f "$TMPCRT"
+sudo service nginx reload
 ```
 
 ```
@@ -216,7 +217,13 @@ specifically for handling this script, the account private key, and the
 challenge folder. Then add the ability for that user to write to your installed
 certificate file (e.g. `/path/to/chained.pem`) and reload your webserver. That
 way, the cron script will do its thing, overwrite your old certificate, and
-reload your webserver without having permission to do anything else.
+reload your webserver without having permission to do anything else. For
+example you could allow user `acme` to reload nginx and Apache 2 by editing
+`/etc/sudeors`.
+
+```
+acme    ALL=(ALL) NOPASSWD: service nginx reload, service apache2 reload
+```
 
 **BE SURE TO:**
 * Backup your account private key (e.g. `account.key`)
@@ -232,4 +239,3 @@ anyone who wants to run it.
 
 If you want to add features for your own setup to make things easier for you,
 please do! It's open source, so feel free to fork it and modify as necessary.
-

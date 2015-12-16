@@ -17,6 +17,18 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     def _b64(b):
         return base64.urlsafe_b64encode(b).decode('utf8').replace("=", "")
 
+    # try to verify server certificates (2.7.9 or newer and 3.4.3 or newer)
+    show_insecure_warning = True
+    def _try_secure_urlopen(url, data=None):
+        nonlocal show_insecure_warning
+        try:
+            return urlopen(url, data, context=ssl.create_default_context())
+        except (AttributeError, TypeError):
+            if show_insecure_warning:
+                log.warning("Your Python version is insecure! It can't verify server certificates! Please consider upgrading your Python interpreter. Secure minimum versions are 2.7.9 and 3.4.3 for Python 2 and Python 3 respectively.")
+                show_insecure_warning = False
+            return urlopen(url, data)
+
     # parse account key to get public key
     log.info("Parsing account key...")
     proc = subprocess.Popen(["openssl", "rsa", "-in", account_key, "-noout", "-text"],
@@ -44,7 +56,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     def _send_signed_request(url, payload):
         payload64 = _b64(json.dumps(payload).encode('utf8'))
         protected = copy.deepcopy(header)
-        protected["nonce"] = urlopen(CA + "/directory", context=ssl.create_default_context()).headers['Replay-Nonce']
+        protected["nonce"] = _try_secure_urlopen(CA + "/directory").headers['Replay-Nonce']
         protected64 = _b64(json.dumps(protected).encode('utf8'))
         proc = subprocess.Popen(["openssl", "dgst", "-sha256", "-sign", account_key],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -56,7 +68,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
             "payload": payload64, "signature": _b64(out),
         })
         try:
-            resp = urlopen(url, data.encode('utf8'), context=ssl.create_default_context())
+            resp = _try_secure_urlopen(url, data.encode('utf8'))
             return resp.getcode(), resp.read()
         except IOError as e:
             return e.code, e.read()
@@ -133,7 +145,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         # wait for challenge to be verified
         while True:
             try:
-                resp = urlopen(challenge['uri'], context=ssl.create_default_context())
+                resp = _try_secure_urlopen(challenge['uri'])
                 challenge_status = json.loads(resp.read().decode('utf8'))
             except IOError as e:
                 raise ValueError("Error checking challenge: {0} {1}".format(
