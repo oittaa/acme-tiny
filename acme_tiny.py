@@ -24,7 +24,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         try:
             return urlopen(url, data, context=ssl.create_default_context())
         except (AttributeError, TypeError):
-            if show_insecure_warning:
+            if SHOW_WARNING:
                 log.warning("Your Python version is insecure! It can't verify server certificates! Please consider upgrading your Python interpreter. Secure minimum versions are 2.7.9 and 3.4.3 for Python 2 and Python 3 respectively.")
                 SHOW_WARNING = False
             return urlopen(url, data)
