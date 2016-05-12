@@ -113,7 +113,7 @@ configure an nginx server:
 
 ```sh
 #NOTE: For nginx, you need to append the Let's Encrypt intermediate cert to your cert
-wget -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
+wget -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem
 cat signed.crt intermediate.pem > chained.pem
 openssl dhparam -out dhparam.pem 4096
 ```
@@ -197,7 +197,7 @@ Example of a `renew_cert.sh`:
 set -e
 TMPCRT=$(mktemp)
 python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "$TMPCRT"
-wget -q -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x1-cross-signed.pem
+wget -q -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem
 cat "$TMPCRT" intermediate.pem > /path/to/chained.pem
 rm -f "$TMPCRT"
 sudo service nginx reload
