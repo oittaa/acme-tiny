@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging, ssl
-try:
-    from urllib.request import urlopen # Python 3
-except ImportError:
-    from urllib2 import urlopen # Python 2
+if sys.version_info[0] < 3:
+    import httplib
+    from urllib2 import urlopen
+else:
+    import http.client as httplib
+    from urllib.request import urlopen
 
 #DEFAULT_CA = "https://acme-staging.api.letsencrypt.org"
 DEFAULT_CA = "https://acme-v01.api.letsencrypt.org"
@@ -92,9 +94,11 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
 
     # get the certificate domains and expiration
     log.info("Registering account...")
+    agreement_conn = httplib.HTTPSConnection(CA.split('/')[-1])
+    agreement_conn.request("HEAD", "/terms")
     code, result = _send_signed_request(CA + "/acme/new-reg", {
         "resource": "new-reg",
-        "agreement": "https://letsencrypt.org/documents/LE-SA-v1.1.1-August-1-2016.pdf",
+        "agreement": agreement_conn.getresponse().getheader("location"),
     })
     if code == 201:
         log.info("Registered!")
