@@ -1,11 +1,12 @@
-language: bash
+sudo: false
+language: shell
+
+cache:
+    directories:
+        - ngrok
 
 before_script:
     - curl -L "https://github.com/kward/shunit2/archive/source.tar.gz" | tar zx
-    - sudo apt-get install apache2
-    - grep -q acme-challenge /etc/apache2/sites-available/default || sudo sed -i '/^<\/VirtualHost/i Alias "/.well-known/acme-challenge" "'$HOME'/challenges"' /etc/apache2/sites-available/default
-    - sudo service apache2 restart
-    - mkdir -p ~/challenges
 
 script:
     - bash tests/acme_test.sh
