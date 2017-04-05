@@ -28,9 +28,9 @@ oneTimeSetUp()
 		)
 	fi
 
-	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}./tmp.log &
+	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}/tmp.log &
 	sleep 2
-	TMP_URL="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" tmp.log | head -1 | cut -d':' -f2)"
+	TMP_URL="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" ${testDir}/tmp.log | head -1 | cut -d':' -f2)"
 	if [ -z "${TMP_URL}" ]; then
 		echo "Couldn't get an url from ngrok, tests can't continue."
 		exit 1
