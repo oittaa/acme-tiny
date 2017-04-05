@@ -1,13 +1,27 @@
 #!/bin/sh
 
-testAcmeTiny() {
-	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed.crt
+testAcmeTinySingleDomain() {
+	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/CN=${tmpURL1}" > ${testDir}/domain1.csr
+	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain1.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed1.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
 
-testCertificate() {
-	openssl x509 -in ${testDir}/signed.crt -text -noout
+testCertificateSingleDomain() {
+	openssl x509 -in ${testDir}/signed1.crt -text -noout
+	rtrn=$?
+	assertTrue 'expecting return code of 0 (true)' ${rtrn}
+}
+
+testAcmeTinyMultipleDomains() {
+	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL2},DNS:${tmpURL3}")) > ${testDir}/domain2.csr
+	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed2.crt
+	rtrn=$?
+	assertTrue 'expecting return code of 0 (true)' ${rtrn}
+}
+
+testCertificateMultipleDomains() {
+	openssl x509 -in ${testDir}/signed2.crt -text -noout
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
@@ -28,14 +42,18 @@ oneTimeSetUp()
 		)
 	fi
 
-	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}/tmp.log &
+	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}/tmp1.log &
+	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}/tmp2.log &
+	ngrok/ngrok http 8080 --log stdout --log-format logfmt --log-level debug > ${testDir}/tmp3.log &
 	sleep 2
-	TMP_URL="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" ${testDir}/tmp.log | head -1 | cut -d':' -f2)"
-	if [ -z "${TMP_URL}" ]; then
+	tmpURL1="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" ${testDir}/tmp1.log | head -1 | cut -d':' -f2)"
+	tmpURL2="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" ${testDir}/tmp2.log | head -1 | cut -d':' -f2)"
+	tmpURL3="$(grep -Eo "Hostname:[a-z0-9]+.ngrok.io" ${testDir}/tmp3.log | head -1 | cut -d':' -f2)"
+	if [ -z "${tmpURL1}" ] || [ -z "${tmpURL2}" ] || [ -z "${tmpURL3}" ]; then
 		echo "Couldn't get an url from ngrok, tests can't continue."
 		exit 1
 	fi
-	# Run python webserver in .acme-challenges directory to serve challenge responses
+	# Run python webserver to serve challenge responses
 	webDir=${testDir}/webserver
 	mkdir -p ${webDir}/.well-known/acme-challenge
 	(
@@ -44,7 +62,6 @@ oneTimeSetUp()
 	) &
 	openssl genrsa 4096 > ${testDir}/account.key
 	openssl genrsa 4096 > ${testDir}/domain.key
-	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/CN=${TMP_URL}" > ${testDir}/domain.csr
 }
 
 # load shunit2
