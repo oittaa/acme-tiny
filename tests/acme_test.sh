@@ -58,7 +58,11 @@ oneTimeSetUp()
 	mkdir -p ${webDir}/.well-known/acme-challenge
 	(
 		cd ${webDir}
-		python -m SimpleHTTPServer 8080 > /dev/null 2> /dev/null
+		if [ "3.0" = "$(printf "$TRAVIS_PYTHON_VERSION\n3.0" | sort -V | head -n 1)" ]; then
+			python -m http.server 8080 > /dev/null 2> /dev/null
+		else
+			python -m SimpleHTTPServer 8080 > /dev/null 2> /dev/null
+		fi
 	) &
 	openssl genrsa 4096 > ${testDir}/account.key
 	openssl genrsa 4096 > ${testDir}/domain.key
