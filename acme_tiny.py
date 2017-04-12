@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging, ssl
+INSECURE_PYTHON = False
 if sys.version_info[0] < 3:
     import httplib
     from urllib2 import urlopen
+    if (2, 7, 9) > sys.version_info: INSECURE_PYTHON = True
 else:
     import http.client as httplib
     from urllib.request import urlopen
+    if (3, 4, 3) > sys.version_info: INSECURE_PYTHON = True
 
 #DEFAULT_CA = "https://acme-staging.api.letsencrypt.org"
 DEFAULT_CA = "https://acme-v01.api.letsencrypt.org"
@@ -13,23 +16,13 @@ DEFAULT_CA = "https://acme-v01.api.letsencrypt.org"
 LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler())
 LOGGER.setLevel(logging.INFO)
-SHOW_WARNING = True
 
 def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     # helper function base64 encode for jose spec
     def _b64(b):
         return base64.urlsafe_b64encode(b).decode('utf8').replace("=", "")
 
-    # try to verify server certificates (2.7.9 or newer and 3.4.3 or newer)
-    def _try_secure_urlopen(url, data=None):
-        global SHOW_WARNING
-        try:
-            return urlopen(url, data, context=ssl.create_default_context())
-        except (AttributeError, TypeError):
-            if SHOW_WARNING:
-                log.warning("Your Python version is insecure! It can't verify server certificates! Please consider upgrading your Python interpreter. Secure minimum versions are 2.7.9 and 3.4.3 for Python 2 and Python 3 respectively.")
-                SHOW_WARNING = False
-            return urlopen(url, data)
+    if INSECURE_PYTHON: log.warning("Your Python version is insecure! It can't verify server certificates! Please consider upgrading your Python interpreter. Secure minimum versions are 2.7.9 and 3.4.3 for Python 2 and Python 3 respectively. http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-9365")
 
     # parse account key to get public key
     log.info("Parsing account key...")
@@ -58,7 +51,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     def _send_signed_request(url, payload):
         payload64 = _b64(json.dumps(payload).encode('utf8'))
         protected = copy.deepcopy(header)
-        protected["nonce"] = _try_secure_urlopen(CA + "/directory").headers['Replay-Nonce']
+        protected["nonce"] = urlopen(CA + "/directory").headers['Replay-Nonce']
         protected64 = _b64(json.dumps(protected).encode('utf8'))
         proc = subprocess.Popen(["openssl", "dgst", "-sha256", "-sign", account_key],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -70,10 +63,10 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
             "payload": payload64, "signature": _b64(out),
         })
         try:
-            resp = _try_secure_urlopen(url, data.encode('utf8'))
+            resp = urlopen(url, data.encode('utf8'))
             return resp.getcode(), resp.read(), resp.info()
         except IOError as e:
-            return e.code, e.read(), None
+            return getattr(e, "code", None), getattr(e, "read", e.__str__)(), None
 
     # find domains
     log.info("Parsing CSR...")
@@ -149,7 +142,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         # wait for challenge to be verified
         while True:
             try:
-                resp = _try_secure_urlopen(challenge['uri'])
+                resp = urlopen(challenge['uri'])
                 challenge_status = json.loads(resp.read().decode('utf8'))
             except IOError as e:
                 raise ValueError("Error checking challenge: {0} {1}".format(
@@ -188,7 +181,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         if len(cert_chain) > 10:
             raise ValueError("Recursion limit reached. Didn't get {0}".format(url))
         try:
-            resp = _try_secure_urlopen(url)
+            resp = urlopen(url)
             link = resp.info().get('Link')
             result = resp.read()
             cert_chain.append(result)
