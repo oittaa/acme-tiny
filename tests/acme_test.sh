@@ -15,7 +15,7 @@ testCertificateSingleDomain() {
 
 testCertificateChainLength() {
 	rtrn=$(openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -c '^Certificate:')
-	assertTrue 'expecting at least two certificates in chain' [ ${rtrn} -ge 2 ]
+	assertTrue 'expecting at least two certificates in chain' "[ ${rtrn} -ge 2 ]"
 }
 
 testAcmeTinyMultipleDomains() {
