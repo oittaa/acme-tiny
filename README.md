@@ -193,13 +193,14 @@ Example of a `renew_cert.sh`:
 #!/bin/sh
 set -e
 TMPCRT=$(mktemp)
+chmod +r "${TMPCRT}"
 python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "${TMPCRT}"
 mv "${TMPCRT}" /path/to/certificate.pem
 sudo service nginx reload
 ```
 
 ```
-#example line in your crontab (runs every monday between 02:00 and 03:00)
+#example line in your crontab (runs every monday randomly between 02:00 and 03:00)
 0 2 * * 1 perl -le 'sleep rand 3600' && /path/to/renew_cert.sh 2>> /var/log/acme_tiny.log
 ```
 

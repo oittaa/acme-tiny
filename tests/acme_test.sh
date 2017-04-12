@@ -8,9 +8,14 @@ testAcmeTinySingleDomain() {
 }
 
 testCertificateSingleDomain() {
-	openssl x509 -in ${testDir}/signed1.crt -text -noout
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed1.crt | openssl pkcs7 -print_certs -text -noout
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
+}
+
+testCertificateChainLength() {
+	rtrn=$(openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -c '^Certificate:')
+	assertTrue 'expecting at least two certificates in chain' [ ${rtrn} -ge 2 ]
 }
 
 testAcmeTinyMultipleDomains() {
@@ -21,7 +26,7 @@ testAcmeTinyMultipleDomains() {
 }
 
 testCertificateMultipleDomains() {
-	openssl x509 -in ${testDir}/signed2.crt -text -noout
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed2.crt | openssl pkcs7 -print_certs -text -noout
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
