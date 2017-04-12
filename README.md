@@ -3,7 +3,7 @@
 This is a tiny, auditable script that you can throw on your server to issue
 and renew [Let's Encrypt](https://letsencrypt.org/) certificates. Since it has
 to be run on your server and have access to your private Let's Encrypt account
-key, I tried to make it as tiny as possible (currently less than 200 lines).
+key, I tried to make it as tiny as possible (currently around 200 lines).
 The only prerequisites are Python and OpenSSL.
 
 **PLEASE READ THE SOURCE CODE! YOU MUST TRUST IT WITH YOUR PRIVATE KEYS!**
@@ -101,7 +101,7 @@ and read your private account key and CSR.
 
 ```sh
 #run the script on your server
-python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ --output ./signed.crt
+python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ --output ./certificate.pem
 ```
 
 ### Step 5: Install the certificate
@@ -112,9 +112,6 @@ https settings in your web server's configuration. Here's an example on how to
 configure an nginx server:
 
 ```sh
-#NOTE: For nginx, you need to append the Let's Encrypt intermediate cert to your cert
-wget -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem
-cat signed.crt intermediate.pem > chained.pem
 openssl dhparam -out dhparam.pem 4096
 ```
 
@@ -124,7 +121,7 @@ server {
     server_name yoursite.com www.yoursite.com;
 
     ssl on;
-    ssl_certificate /path/to/chained.pem;
+    ssl_certificate /path/to/certificate.pem;
     ssl_certificate_key /path/to/domain.key;
     ssl_session_timeout 5m;
     ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
@@ -163,7 +160,7 @@ SSLStaplingCache shmcb:/var/run/ocsp(128000)
     SSLStaplingResponderTimeout 5
     SSLStaplingReturnResponderErrors off
     SSLCertificateKeyFile /path/to/domain.key
-    SSLCertificateFile /path/to/chained.pem
+    SSLCertificateFile /path/to/certificate.pem
     SSLCipherSuite ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA
     #If you DON'T have Apache 2.4.8 or later and OpenSSL 1.0.2 or later, comment out the following line
     SSLOpenSSLConfCmd DHParameters /path/to/dhparam.pem
@@ -196,16 +193,14 @@ Example of a `renew_cert.sh`:
 #!/bin/sh
 set -e
 TMPCRT=$(mktemp)
-python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "$TMPCRT"
-wget -q -O intermediate.pem https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem
-cat "$TMPCRT" intermediate.pem > /path/to/chained.pem
-rm -f "$TMPCRT"
+python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "${TMPCRT}"
+mv "${TMPCRT}" /path/to/certificate.pem
 sudo service nginx reload
 ```
 
 ```
-#example line in your crontab (runs once per month)
-0 0 1 * * /path/to/renew_cert.sh 2>> /var/log/acme_tiny.log
+#example line in your crontab (runs every monday between 02:00 and 03:00)
+0 2 * * 1 perl -le 'sleep rand 3600' && /path/to/renew_cert.sh 2>> /var/log/acme_tiny.log
 ```
 
 ## Permissions
@@ -215,9 +210,9 @@ script is permissions. You want to limit access to your account private key and
 challenge web folder as much as possible. I'd recommend creating a user
 specifically for handling this script, the account private key, and the
 challenge folder. Then add the ability for that user to write to your installed
-certificate file (e.g. `/path/to/chained.pem`) and reload your webserver. That
-way, the cron script will do its thing, overwrite your old certificate, and
-reload your webserver without having permission to do anything else. For
+certificate file (e.g. `/path/to/certificate.pem`) and reload your webserver.
+That way, the cron script will do its thing, overwrite your old certificate,
+and reload your webserver without having permission to do anything else. For
 example you could allow user `acme` to reload nginx and Apache 2 by editing
 `/etc/sudeors`.
 
@@ -234,8 +229,8 @@ acme    ALL=(ALL) NOPASSWD: service nginx reload, service apache2 reload
 
 This project has a very, very limited scope and codebase. I'm happy to receive
 bug reports and pull requests, but please don't add any new features. This
-script must stay under 200 lines of code to ensure it can be easily audited by
-anyone who wants to run it.
+script must stay short to ensure it can be easily audited by anyone who wants
+to run it.
 
 If you want to add features for your own setup to make things easier for you,
 please do! It's open source, so feel free to fork it and modify as necessary.

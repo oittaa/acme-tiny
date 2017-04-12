@@ -71,9 +71,9 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         })
         try:
             resp = _try_secure_urlopen(url, data.encode('utf8'))
-            return resp.getcode(), resp.read()
+            return resp.getcode(), resp.read(), resp.info()
         except IOError as e:
-            return e.code, e.read()
+            return e.code, e.read(), None
 
     # find domains
     log.info("Parsing CSR...")
@@ -96,7 +96,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     log.info("Registering account...")
     agreement_conn = httplib.HTTPSConnection(CA.split('/')[-1])
     agreement_conn.request("HEAD", "/terms")
-    code, result = _send_signed_request(CA + "/acme/new-reg", {
+    code, result, headers = _send_signed_request(CA + "/acme/new-reg", {
         "resource": "new-reg",
         "agreement": agreement_conn.getresponse().getheader("location"),
     })
@@ -112,7 +112,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         log.info("Verifying {0}...".format(domain))
 
         # get new challenge
-        code, result = _send_signed_request(CA + "/acme/new-authz", {
+        code, result, headers = _send_signed_request(CA + "/acme/new-authz", {
             "resource": "new-authz",
             "identifier": {"type": "dns", "value": domain},
         })
@@ -139,7 +139,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
                 wellknown_path, wellknown_url))
 
         # notify challenge are met
-        code, result = _send_signed_request(challenge['uri'], {
+        code, result, headers = _send_signed_request(challenge['uri'], {
             "resource": "challenge",
             "keyAuthorization": keyauthorization,
         })
@@ -169,17 +169,37 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     proc = subprocess.Popen(["openssl", "req", "-in", csr, "-outform", "DER"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     csr_der, err = proc.communicate()
-    code, result = _send_signed_request(CA + "/acme/new-cert", {
+    code, result, headers = _send_signed_request(CA + "/acme/new-cert", {
         "resource": "new-cert",
         "csr": _b64(csr_der),
     })
     if code != 201:
         raise ValueError("Error signing certificate: {0} {1}".format(code, result))
 
+    # get certificate chain
+    cert_chain = [result]
+    link = headers.get('Link')
+    while link:
+        url = re.search('^<(http[^>]+)>;rel="up"$', link)
+        if url:
+            url = url.group(1)
+        else:
+            break
+        if len(cert_chain) > 10:
+            raise ValueError("Recursion limit reached. Didn't get {0}".format(url))
+        try:
+            resp = _try_secure_urlopen(url)
+            link = resp.info().get('Link')
+            result = resp.read()
+            cert_chain.append(result)
+        except IOError as e:
+            raise ValueError("Couldn't download certificate {0}, {1} {2}".format(
+                url, e.code, e.read()))
+
     # return signed certificate!
     log.info("Certificate signed!")
-    return """-----BEGIN CERTIFICATE-----\n{0}\n-----END CERTIFICATE-----\n""".format(
-        "\n".join(textwrap.wrap(base64.b64encode(result).decode('utf8'), 64)))
+    return ''.join("""-----BEGIN CERTIFICATE-----\n{0}\n-----END CERTIFICATE-----\n""".format(
+        "\n".join(textwrap.wrap(base64.b64encode(cert).decode('utf8'), 64))) for cert in cert_chain)
 
 def main(argv):
     parser = argparse.ArgumentParser(
