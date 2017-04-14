@@ -14,7 +14,9 @@ else:
 DEFAULT_CA = "https://acme-v01.api.letsencrypt.org"
 
 LOGGER = logging.getLogger(__name__)
-LOGGER.addHandler(logging.StreamHandler())
+LOGGER_HANDLER = logging.StreamHandler()
+LOGGER_HANDLER.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+LOGGER.addHandler(LOGGER_HANDLER)
 LOGGER.setLevel(logging.INFO)
 
 def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
