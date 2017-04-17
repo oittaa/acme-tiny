@@ -197,6 +197,10 @@ set -e
 TMPCRT=$(mktemp)
 chmod +r "${TMPCRT}"
 python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /var/www/challenges/ --output "${TMPCRT}"
+openssl verify -untrusted "${TMPCRT}" "${TMPCRT}" | grep -q ^error && (
+    echo "Could not validate certificate: ${TMPCRT}"
+    exit 1
+)
 mv "${TMPCRT}" /path/to/certificate.pem
 sudo service nginx reload
 ```
