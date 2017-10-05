@@ -83,7 +83,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     log.info("Parsing CSR...")
     csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf8")
     domains = set([])
-    common_name = re.search(r"Subject:.*? CN=([^\s,;/]+)", csr_dump)
+    common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
     if common_name is not None:
         domains.add(common_name.group(1))
     subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n", csr_dump, re.MULTILINE|re.DOTALL)
