@@ -10,7 +10,7 @@ The only prerequisites are Python and OpenSSL.
 
 **PLEASE READ THE SOURCE CODE! YOU MUST TRUST IT WITH YOUR PRIVATE KEYS!**
 
-##Donate
+## Donate
 
 If this script is useful to you, please donate to the EFF. I don't work there,
 but they do fantastic work.
@@ -40,15 +40,15 @@ to it, even for renewals. You can use the same CSR for multiple renewals. NOTE:
 you can't use your account private key as your domain private key!
 
 ```sh
-#generate a domain private key (if you haven't already)
+# Generate a domain private key (if you haven't already)
 openssl genrsa 4096 > domain.key
 ```
 
 ```sh
-#for a single domain
+# For a single domain (yoursite.com)
 openssl req -new -sha256 -key domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:yoursite.com")) > domain.csr
 
-#for multiple domains (use this one if you want both www.yoursite.com and yoursite.com)
+# For multiple domains (use this one if you want both www.yoursite.com and yoursite.com)
 openssl req -new -sha256 -key domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:yoursite.com,DNS:www.yoursite.com")) > domain.csr
 ```
 
@@ -61,12 +61,12 @@ folder is served under the ".well-known/acme-challenge/" url path. NOTE: This
 must be on port 80 (not port 443).
 
 ```sh
-#make some challenge folder (modify to suit your needs)
+# Make some challenge folder (modify to suit your needs)
 mkdir -p /var/www/challenges/
 ```
 
 ```nginx
-#example for nginx
+# Example for nginx
 server {
     listen 80;
     server_name yoursite.com www.yoursite.com;
@@ -81,7 +81,7 @@ server {
 ```
 
 ```apache
-#example for Apache 2.4
+# Example for Apache 2.4
 <VirtualHost *:80>
     ServerName yoursite.com
     ServerAlias www.yoursite.com
@@ -102,7 +102,7 @@ script on your server with the permissions needed to write to the above folder
 and read your private account key and CSR.
 
 ```sh
-#run the script on your server
+# Run the script on your server
 python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /var/www/challenges/ --output ./certificate.pem
 ```
 
@@ -118,6 +118,7 @@ openssl dhparam -out dhparam.pem 4096
 ```
 
 ```nginx
+# Example for nginx
 server {
     listen 443;
     server_name yoursite.com www.yoursite.com;
@@ -149,7 +150,7 @@ server {
 ```
 
 ```apache
-#example for Apache 2.4
+# Example for Apache 2.4
 SSLStaplingCache shmcb:/var/run/ocsp(128000)
 <VirtualHost *:443>
     ServerName yoursite.com
@@ -206,7 +207,7 @@ sudo service nginx reload
 ```
 
 ```
-#example line in your crontab (runs every monday randomly between 02:00 and 03:00)
+# Example line in your crontab (runs every monday randomly between 02:00 and 03:00)
 0 2 * * 1 perl -le 'sleep rand 3600' && /path/to/renew_cert.sh 2>> /var/log/acme_tiny.log
 ```
 
