@@ -1,7 +1,7 @@
 #!/bin/sh
 
 testAcmeTinySingleDomain() {
-	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/CN=${tmpURL1}" > ${testDir}/domain1.csr
+	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL1}")) > ${testDir}/domain1.csr
 	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain1.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed1.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
