@@ -4,10 +4,12 @@ INSECURE_PYTHON = False
 if sys.version_info[0] < 3:
     import httplib
     from urllib2 import urlopen
+    from urlparse import urlparse
     if (2, 7, 9) > sys.version_info: INSECURE_PYTHON = True
 else:
     import http.client as httplib
     from urllib.request import urlopen
+    from urllib.parse import urlparse
     if (3, 4, 3) > sys.version_info: INSECURE_PYTHON = True
 
 #DEFAULT_CA = "https://acme-staging.api.letsencrypt.org"
@@ -50,10 +52,17 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf8')).digest())
 
     # helper function make signed requests
-    def _send_signed_request(url, payload):
+    def _send_signed_request(url_or_key, payload):
         payload64 = _b64(json.dumps(payload).encode('utf8'))
         protected = copy.deepcopy(header)
-        protected["nonce"] = urlopen(CA + "/directory").headers['Replay-Nonce']
+        directory_request = urlopen(CA + "/directory")
+        directory_data = json.loads(directory_request.read().decode('utf8'))
+        if url_or_key in directory_data:
+            # Use the URL from the /directory response
+            url = directory_data[url_or_key]
+        else:
+            url = url_or_key
+        protected["nonce"] = directory_request.headers['Replay-Nonce']
         protected64 = _b64(json.dumps(protected).encode('utf8'))
         proc = subprocess.Popen(["openssl", "dgst", "-sha256", "-sign", account_key],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -89,9 +98,9 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
 
     # get the certificate domains and expiration
     log.info("Registering account...")
-    agreement_conn = httplib.HTTPSConnection(CA.split('/')[-1])
+    agreement_conn = httplib.HTTPSConnection(urlparse(CA).hostname)
     agreement_conn.request("HEAD", "/terms")
-    code, result, headers = _send_signed_request(CA + "/acme/new-reg", {
+    code, result, headers = _send_signed_request("new-reg", {
         "resource": "new-reg",
         "agreement": agreement_conn.getresponse().getheader("location"),
     })
@@ -107,7 +116,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
         log.info("Verifying {0}...".format(domain))
 
         # get new challenge
-        code, result, headers = _send_signed_request(CA + "/acme/new-authz", {
+        code, result, headers = _send_signed_request("new-authz", {
             "resource": "new-authz",
             "identifier": {"type": "dns", "value": domain},
         })
@@ -115,7 +124,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
             raise ValueError("Error requesting challenges: {0} {1}".format(code, result))
 
         # make the challenge file
-        challenge = [c for c in json.loads(result.decode('utf8'))['challenges'] if c['type'] == "http-01"][0]
+        challenge = [c for c in json.loads(result.decode('utf8'))['challenges'] if c['type'] == "http-01" or c['status'] == "valid"][0]
         token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
         keyauthorization = "{0}.{1}".format(token, thumbprint)
         wellknown_path = os.path.join(acme_dir, token)
@@ -164,7 +173,7 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
     proc = subprocess.Popen(["openssl", "req", "-in", csr, "-outform", "DER"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     csr_der, err = proc.communicate()
-    code, result, headers = _send_signed_request(CA + "/acme/new-cert", {
+    code, result, headers = _send_signed_request("new-cert", {
         "resource": "new-cert",
         "csr": _b64(csr_der),
     })
