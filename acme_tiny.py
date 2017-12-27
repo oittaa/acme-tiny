@@ -1,15 +1,11 @@
 #!/usr/bin/env python
-import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging, ssl
+import argparse, subprocess, json, os, sys, base64, binascii, time, hashlib, re, copy, textwrap, logging
 INSECURE_PYTHON = False
 if sys.version_info[0] < 3:
-    import httplib
     from urllib2 import urlopen
-    from urlparse import urlparse
     if (2, 7, 9) > sys.version_info: INSECURE_PYTHON = True
 else:
-    import http.client as httplib
     from urllib.request import urlopen
-    from urllib.parse import urlparse
     if (3, 4, 3) > sys.version_info: INSECURE_PYTHON = True
 
 #DEFAULT_CA = "https://acme-staging.api.letsencrypt.org"
@@ -94,11 +90,9 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
 
     # get the certificate domains and expiration
     log.info("Registering account...")
-    agreement_conn = httplib.HTTPSConnection(urlparse(CA).hostname)
-    agreement_conn.request("HEAD", "/terms")
     code, result, headers = _send_signed_request("new-reg", {
         "resource": "new-reg",
-        "agreement": agreement_conn.getresponse().getheader("location"),
+        "agreement": json.loads(urlopen(CA + "/directory").read().decode('utf8'))['meta']['terms-of-service'],
     })
     if code == 201:
         log.info("Registered!")
