@@ -70,7 +70,9 @@ class ACMETiny(object):
                     url, err.code, json.loads(err.read().decode('utf8'))))
             if result['status'] == retry_type:
                 retry_after = resp.info().get('Retry-After')
-                if not isinstance(retry_after, (int)):
+                if isinstance(retry_after, (str)) and retry_after.isdigit():
+                    retry_after = int(retry_after)
+                else:
                     retry_after = 2
                 self.log.debug("%s: retrying in %d...", retry_type, retry_after)
                 time.sleep(retry_after)
