@@ -104,8 +104,8 @@ class ACMETiny(object):
 
             try:
                 resp = urlopen(url, data.encode('utf8'))
-                code, result, headers = resp.getcode(), resp.read().decode('utf8'), resp.info()
-                message = return_codes[code]
+                code, result = resp.getcode(), json.loads(resp.read().decode('utf8'))
+                headers, message = resp.info(), return_codes[code]
                 break
             except HTTPError as err:
                 code, result = err.code, json.loads(err.read().decode('utf8'))
@@ -114,7 +114,7 @@ class ACMETiny(object):
                     continue
                 raise ValueError(error_message.format(code=code, result=result))
             except KeyError:
-                raise ValueError(error_message.format(code=code, result=json.loads(result)))
+                raise ValueError(error_message.format(code=code, result=result))
         if message is not None:
             self.log.info(message)
         return result, headers
@@ -152,7 +152,7 @@ class ACMETiny(object):
 
         # notify that the challenge is met
         payload = {"keyAuthorization": keyauthorization}
-        self._send_signed_request(challenge['url'], payload, {200: "Challenge sent!"},
+        self._send_signed_request(challenge['url'], payload, {200: "Challenge sent..."},
                                   "Error triggering challenge: {code} {result}")
         self._urlopen_retry(challenge['url'], 'pending', "Challenge did not pass: {result}")
         self.log.info("%s verified!", domain)
@@ -218,8 +218,7 @@ class ACMETiny(object):
                                                     return_codes, error_message)
 
         order_url = headers['Location']
-        authorizations = json.loads(result)['authorizations']
-        for auth_url in authorizations:
+        for auth_url in result['authorizations']:
             self._authz(auth_url)
 
         self.log.debug("Checking order to get finalize URL...")
