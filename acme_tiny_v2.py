@@ -26,8 +26,6 @@ except ImportError:
 DEFAULT_CA = "https://acme-staging.api.letsencrypt.org/directory"
 # DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
 
-BADNONCE = "urn:ietf:params:acme:error:badNonce"
-
 LOGGER = logging.getLogger(__name__)
 LOGGER_HANDLER = logging.StreamHandler()
 LOGGER_HANDLER.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
@@ -106,21 +104,17 @@ class ACMETiny(object):
 
             try:
                 resp = urlopen(url, data.encode('utf8'))
-                code, result, headers = resp.getcode(), resp.read(), resp.info()
+                code, result, headers = resp.getcode(), resp.read().decode('utf8'), resp.info()
+                message = return_codes[code]
+                break
             except HTTPError as err:
-                code, result, headers = err.code, err.read(), None
-                if code == 400:
-                    data = json.loads(result.decode('utf8'))['type']
-                    if data == BADNONCE:
-                        self.log.warning("badNonce error: retrying...")
-                        continue
-            finally:
-                try:
-                    if code != 400 or data != BADNONCE:
-                        message = return_codes[code]
-                except KeyError:
-                    raise ValueError(error_message.format(code=code, result=result))
-            break
+                code, result = err.code, json.loads(err.read().decode('utf8'))
+                if code == 400 and result['type'] == 'urn:ietf:params:acme:error:badNonce':
+                    self.log.warning("badNonce error: retrying...")
+                    continue
+                raise ValueError(error_message.format(code=code, result=result))
+            except KeyError:
+                raise ValueError(error_message.format(code=code, result=json.loads(result)))
         if message is not None:
             self.log.info(message)
         return result, headers
@@ -224,7 +218,7 @@ class ACMETiny(object):
                                                     return_codes, error_message)
 
         order_url = headers['Location']
-        authorizations = json.loads(result.decode('utf8'))['authorizations']
+        authorizations = json.loads(result)['authorizations']
         for auth_url in authorizations:
             self._authz(auth_url)
 
@@ -235,8 +229,7 @@ class ACMETiny(object):
         return_codes = {200: "Success!"}
         error_message = "Error POSTing to finalize URL: {code} {result}"
         self.log.info("POSTing CSR to finalize URL...")
-        result, headers = self._send_signed_request(result['finalize'], payload,
-                                                    return_codes, error_message)
+        self._send_signed_request(result['finalize'], payload, return_codes, error_message)
         result = self._urlopen_retry(order_url, 'processing', "Order isn't valid: {result}")
         self.log.debug("Downloading certificate: %s", result['certificate'])
         self.certificate = urlopen(result['certificate']).read().decode('utf8')
