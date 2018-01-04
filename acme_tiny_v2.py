@@ -26,12 +26,6 @@ except ImportError:
 DEFAULT_CA = "https://acme-staging.api.letsencrypt.org/directory"
 # DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
 
-LOGGER = logging.getLogger(__name__)
-LOGGER_HANDLER = logging.StreamHandler()
-LOGGER_HANDLER.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
-LOGGER.addHandler(LOGGER_HANDLER)
-LOGGER.setLevel(logging.INFO)
-
 # helper function to base64 encode for jose spec
 def _b64(data):
     return base64.urlsafe_b64encode(data).decode('utf8').rstrip('=')
@@ -52,18 +46,14 @@ class ACMETiny(object):
 
     def __init__(self, account_key, csr, acme_dir, ca=None):
         self.paths = {"account_key": account_key, "csr": csr, "acme_dir": acme_dir}
-        self.acme_ca = ca or DEFAULT_CA
-        self.kid = self.header = self.thumbprint = self.certificate = None
-        self.log = LOGGER
-
-    def _retry_after_sleep(self, headers):
-        retry_after = headers.get('Retry-After')
-        if isinstance(retry_after, (str)) and retry_after.isdigit():
-            retry_after = int(retry_after)
-        else:
-            retry_after = 2
-        self.log.debug("Retrying in %d seconds...", retry_after)
-        time.sleep(retry_after)
+        self.paths['acme_ca'] = ca or DEFAULT_CA
+        self.kid = self.header = self.thumbprint = self.certificate = self.nonce = None
+        logger = logging.getLogger(__name__)
+        logger_handler = logging.StreamHandler()
+        logger_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(logger_handler)
+        logger.setLevel(logging.INFO)
+        self.log = logger
 
     # helper function for rate limited queries
     def _urlopen_retry(self, url, retry_type, error_message):
@@ -82,6 +72,16 @@ class ACMETiny(object):
             else:
                 raise ValueError(error_message.format(result=result))
 
+    # helper function for waiting 'Retry-After' amount from headers
+    def _retry_after_sleep(self, headers):
+        retry_after = headers.get('Retry-After')
+        if isinstance(retry_after, (str)) and retry_after.isdigit():
+            retry_after = int(retry_after)
+        else:
+            retry_after = 2  # by default wait 2 seconds
+        self.log.debug("Retrying in %d seconds...", retry_after)
+        time.sleep(retry_after)
+
     # helper function to make signed requests
     def _send_signed_request(self, url_or_key, payload, return_codes, error_message):
         self.log.debug("Signed request url or key: %s", url_or_key)
@@ -89,7 +89,7 @@ class ACMETiny(object):
         payload = _b64(json.dumps(payload).encode('utf8'))
         while True:
             protected = copy.deepcopy(self.header)
-            resp = urlopen(self.acme_ca)
+            resp = urlopen(self.paths['acme_ca'])
             result = json.loads(resp.read().decode('utf8'))
             if url_or_key in result:
                 url = result[url_or_key]  # Use the URL from the /directory response
@@ -98,8 +98,12 @@ class ACMETiny(object):
             if url_or_key not in ['newAccount', 'revokeCert']:
                 del protected['jwk']
                 protected['kid'] = self.kid
-            resp = urlopen(result['newNonce'])
-            protected['nonce'] = resp.headers['Replay-Nonce']
+            if self.nonce is None:
+                if resp.headers.get('Replay-Nonce') is None:
+                    self.log.debug("Nonce from newNonce resource: %s", result['newNonce'])
+                    resp = urlopen(result['newNonce'])
+                self.nonce = resp.headers.get('Replay-Nonce')
+            protected['nonce'] = self.nonce
             protected['url'] = url
             protected = _b64(json.dumps(protected).encode('utf8'))
             sig = _b64(_openssl("dgst", ["-sha256", "-sign", self.paths['account_key']],
@@ -110,14 +114,16 @@ class ACMETiny(object):
                 resp = urlopen(url, data.encode('utf8'))
                 code, result = resp.getcode(), json.loads(resp.read().decode('utf8'))
                 headers, message = resp.info(), return_codes[code]
+                self.nonce = headers.get('Replay-Nonce')
                 break
             except HTTPError as err:
                 code, result, headers = err.code, json.loads(err.read().decode('utf8')), err.info()
-                if code == 400 and result['type'] == 'urn:ietf:params:acme:error:badNonce':
-                    self.log.warning("badNonce error: retrying...")
+                self.nonce = headers.get('Replay-Nonce')
+                if code == 400 and result.get('type') == 'urn:ietf:params:acme:error:badNonce':
+                    self.log.warning("badNonce: retrying...")
                     continue
                 if result.get('type') == 'urn:ietf:params:acme:error:rateLimited':
-                    self.log.warning("rateLimited error: retrying...")
+                    self.log.warning("rateLimited: retrying...")
                     self._retry_after_sleep(headers)
                     continue
                 raise ValueError(error_message.format(code=code, result=result))
