@@ -95,6 +95,7 @@ class ACMETiny(object):
             if url_or_key not in ['newAccount', 'revokeCert']:
                 del protected['jwk']
                 protected['kid'] = self.kid
+            resp = urlopen(result['newNonce'])
             protected['nonce'] = resp.headers['Replay-Nonce']
             protected['url'] = url
             protected = _b64(json.dumps(protected).encode('utf8'))
