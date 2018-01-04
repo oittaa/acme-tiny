@@ -56,6 +56,15 @@ class ACMETiny(object):
         self.kid = self.header = self.thumbprint = self.certificate = None
         self.log = LOGGER
 
+    def _retry_after_sleep(self, headers):
+        retry_after = headers.get('Retry-After')
+        if isinstance(retry_after, (str)) and retry_after.isdigit():
+            retry_after = int(retry_after)
+        else:
+            retry_after = 2
+        self.log.debug("Retrying in %d seconds...", retry_after)
+        time.sleep(retry_after)
+
     # helper function for rate limited queries
     def _urlopen_retry(self, url, retry_type, error_message):
         while True:
@@ -67,13 +76,7 @@ class ACMETiny(object):
                 raise ValueError("Error fetching url: {0} {1} {2}".format(
                     url, err.code, json.loads(err.read().decode('utf8'))))
             if result['status'] == retry_type:
-                retry_after = resp.info().get('Retry-After')
-                if isinstance(retry_after, (str)) and retry_after.isdigit():
-                    retry_after = int(retry_after)
-                else:
-                    retry_after = 2
-                self.log.debug("%s: retrying in %d...", retry_type, retry_after)
-                time.sleep(retry_after)
+                self._retry_after_sleep(resp.info())
             elif result['status'] == 'valid':
                 return result
             else:
@@ -109,9 +112,13 @@ class ACMETiny(object):
                 headers, message = resp.info(), return_codes[code]
                 break
             except HTTPError as err:
-                code, result = err.code, json.loads(err.read().decode('utf8'))
+                code, result, headers = err.code, json.loads(err.read().decode('utf8')), err.info()
                 if code == 400 and result['type'] == 'urn:ietf:params:acme:error:badNonce':
                     self.log.warning("badNonce error: retrying...")
+                    continue
+                if result.get('type') == 'urn:ietf:params:acme:error:rateLimited':
+                    self.log.warning("rateLimited error: retrying...")
+                    self._retry_after_sleep(headers)
                     continue
                 raise ValueError(error_message.format(code=code, result=result))
             except KeyError:
