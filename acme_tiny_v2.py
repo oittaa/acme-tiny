@@ -23,7 +23,7 @@ try:
 except ImportError:
     from urllib2 import urlopen, HTTPError  # Python 2
 
-DEFAULT_CA = "https://acme-staging.api.letsencrypt.org/directory"
+DEFAULT_CA = "https://acme-staging-v02.api.letsencrypt.org/directory"
 # DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
 
 # helper function to base64 encode for jose spec
