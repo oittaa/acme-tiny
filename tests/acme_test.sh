@@ -35,7 +35,7 @@ testAcmeTinyV1MultipleDomains() {
 }
 
 testAcmeTinyV2MultipleDomains() {
-	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging-v02.api.letsencrypt.org/directory --output ${testDir}/v2signed2.crt
+	python acme_tiny_v2.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging-v02.api.letsencrypt.org/directory --output ${testDir}/v2signed2.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
