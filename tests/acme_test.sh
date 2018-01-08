@@ -1,34 +1,52 @@
 #!/bin/sh
 
-testAcmeTinySingleDomain() {
-	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL1}")) > ${testDir}/domain1.csr
-	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain1.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed1.crt
+testAcmeTinyV1SingleDomain() {
+	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain1.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/v1signed1.crt
+	rtrn=$?
+	assertTrue 'expecting return code of 0 (true)' ${rtrn}
+}
+
+testAcmeTinyV2SingleDomain() {
+	python acme_tiny_v2.py --account-key ${testDir}/account.key --csr ${testDir}/domain1.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging-v02.api.letsencrypt.org/directory --output ${testDir}/v2signed1.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
 
 testCertificateSingleDomain() {
-	openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed1.crt | openssl pkcs7 -print_certs -text -noout
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/v1signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -Fq "DNS:${tmpURL1}"
+	rtrn=$?
+	assertTrue 'v1 expecting return code of 0 (true)' ${rtrn}
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/v2signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -Fq "DNS:${tmpURL1}"
+	rtrn=$?
+	assertTrue 'v2 expecting return code of 0 (true)' ${rtrn}
+}
+
+testCertificateChainLength() {
+	rtrn=$(openssl crl2pkcs7 -nocrl -certfile ${testDir}/v1signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -c '^Certificate:')
+	assertTrue 'v1 expecting at least two certificates in chain' "[ ${rtrn} -ge 2 ]"
+	rtrn=$(openssl crl2pkcs7 -nocrl -certfile ${testDir}/v2signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -c '^Certificate:')
+	assertTrue 'v2 expecting at least two certificates in chain' "[ ${rtrn} -ge 2 ]"
+}
+
+testAcmeTinyV1MultipleDomains() {
+	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/v1signed2.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
 
-testCertificateChainLength() {
-	rtrn=$(openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed1.crt | openssl pkcs7 -print_certs -text -noout | grep -c '^Certificate:')
-	assertTrue 'expecting at least two certificates in chain' "[ ${rtrn} -ge 2 ]"
-}
-
-testAcmeTinyMultipleDomains() {
-	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL2},DNS:${tmpURL3}")) > ${testDir}/domain2.csr
-	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging.api.letsencrypt.org --output ${testDir}/signed2.crt
+testAcmeTinyV2MultipleDomains() {
+	python acme_tiny.py --account-key ${testDir}/account.key --csr ${testDir}/domain2.csr --acme-dir ${webDir}/.well-known/acme-challenge --ca https://acme-staging-v02.api.letsencrypt.org/directory --output ${testDir}/v2signed2.crt
 	rtrn=$?
 	assertTrue 'expecting return code of 0 (true)' ${rtrn}
 }
 
 testCertificateMultipleDomains() {
-	openssl crl2pkcs7 -nocrl -certfile ${testDir}/signed2.crt | openssl pkcs7 -print_certs -text -noout
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/v1signed2.crt | openssl pkcs7 -print_certs -text -noout | grep -F "DNS:${tmpURL2}" | grep -Fq "DNS:${tmpURL3}"
 	rtrn=$?
-	assertTrue 'expecting return code of 0 (true)' ${rtrn}
+	assertTrue 'v1 expecting return code of 0 (true)' ${rtrn}
+	openssl crl2pkcs7 -nocrl -certfile ${testDir}/v2signed2.crt | openssl pkcs7 -print_certs -text -noout | grep -F "DNS:${tmpURL2}" | grep -Fq "DNS:${tmpURL3}"
+	rtrn=$?
+	assertTrue 'v2 expecting return code of 0 (true)' ${rtrn}
 }
 
 oneTimeSetUp()
@@ -71,6 +89,8 @@ oneTimeSetUp()
 	) &
 	openssl genrsa 4096 > ${testDir}/account.key
 	openssl genrsa 4096 > ${testDir}/domain.key
+	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL1}")) > ${testDir}/domain1.csr
+	openssl req -new -sha256 -key ${testDir}/domain.key -subj "/" -reqexts SAN -config <(cat /etc/ssl/openssl.cnf <(printf "[SAN]\nsubjectAltName=DNS:${tmpURL2},DNS:${tmpURL3}")) > ${testDir}/domain2.csr
 }
 
 # load shunit2
