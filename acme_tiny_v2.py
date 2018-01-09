@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """This script automates the process of getting a signed TLS certificate from
 Let's Encrypt using the ACME v2 protocol. It will need to be run on your
 server and have access to your private account key, so PLEASE READ THROUGH IT!
@@ -103,7 +104,7 @@ class ACMETiny(object):
                     self.log.debug("Nonce from newNonce resource: %s", result['newNonce'])
                     resp = urlopen(result['newNonce'])
                 self.nonce = resp.headers.get('Replay-Nonce')
-            protected['nonce'] = self.nonce
+            protected['nonce'] = re.sub(r"[^A-Za-z0-9_\-]", "", self.nonce)
             protected['url'] = url
             protected = _b64(json.dumps(protected).encode('utf8'))
             sig = _b64(_openssl("dgst", ["-sha256", "-sign", self.paths['account_key']],
