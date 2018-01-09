@@ -113,8 +113,10 @@ class ACMETiny(object):
 
             try:
                 resp = urlopen(url, data.encode('utf8'))
-                code, result = resp.getcode(), json.loads(resp.read().decode('utf8'))
+                code, result = resp.getcode(), resp.read().decode('utf8')
                 headers, message = resp.info(), return_codes[code]
+                if headers.get('Content-Type') and 'json' in headers.get('Content-Type'):
+                    result = json.loads(result)
                 self.nonce = headers.get('Replay-Nonce')
                 break
             except HTTPError as err:
