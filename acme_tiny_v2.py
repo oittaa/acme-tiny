@@ -45,16 +45,19 @@ class ACMETiny(object):
     """ACMETiny implements a minimal client for the IETF Automatic Certificate
     Management Environment (ACME) protocol"""
 
-    def __init__(self, account_key, csr, acme_dir, ca=None):
-        self.paths = {"account_key": account_key, "csr": csr, "acme_dir": acme_dir}
+    def __init__(self, account_key, acme_dir, ca=None, logger=None):
+        self.paths = {"account_key": account_key, "acme_dir": acme_dir}
         self.paths['acme_ca'] = ca or DEFAULT_CA
-        self.kid = self.header = self.thumbprint = self.certificate = self.nonce = None
-        logger = logging.getLogger(__name__)
-        logger_handler = logging.StreamHandler()
-        logger_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(logger_handler)
-        logger.setLevel(logging.INFO)
+        self.kid = self.header = self.certificate = None
+        if logger is None:
+            log_format = '%(asctime)s - %(levelname)s - %(message)s'
+            logging.basicConfig(format=log_format)
+            logger = logging.getLogger(__name__)
+            logger.setLevel(logging.INFO)
         self.log = logger
+        resp = urlopen(self.paths['acme_ca'])
+        self.directory = json.loads(resp.read().decode('utf8'))
+        self.nonce = resp.headers.get('Replay-Nonce')
 
     # helper function for rate limited queries
     def _urlopen_retry(self, url, retry_type, error_message):
@@ -90,19 +93,16 @@ class ACMETiny(object):
         payload = _b64(json.dumps(payload).encode('utf8'))
         while True:
             protected = copy.deepcopy(self.header)
-            resp = urlopen(self.paths['acme_ca'])
-            result = json.loads(resp.read().decode('utf8'))
-            if url_or_key in result:
-                url = result[url_or_key]  # Use the URL from the /directory response
+            if url_or_key in self.directory:
+                url = self.directory[url_or_key]  # Use the URL from the /directory response
             else:
                 url = url_or_key
             if url_or_key not in ['newAccount', 'revokeCert']:
                 del protected['jwk']
                 protected['kid'] = self.kid
             if self.nonce is None:
-                if resp.headers.get('Replay-Nonce') is None:
-                    self.log.debug("Nonce from newNonce resource: %s", result['newNonce'])
-                    resp = urlopen(result['newNonce'])
+                self.log.debug("Nonce from newNonce resource: %s", self.directory['newNonce'])
+                resp = urlopen(self.directory['newNonce'])
                 self.nonce = resp.headers.get('Replay-Nonce')
             protected['nonce'] = re.sub(r"[^A-Za-z0-9_\-]", "", self.nonce)
             protected['url'] = url
@@ -151,7 +151,9 @@ class ACMETiny(object):
         # make the challenge file
         challenge = [c for c in resp_data['challenges'] if c['type'] == "http-01"][0]
         token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
-        keyauthorization = "{0}.{1}".format(token, self.thumbprint)
+        accountkey_json = json.dumps(self.header['jwk'], sort_keys=True, separators=(',', ':'))
+        thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf8')).digest())
+        keyauthorization = "{0}.{1}".format(token, thumbprint)
         wellknown_path = os.path.join(self.paths['acme_dir'], token)
         with open(wellknown_path, "w") as wellknown_file:
             wellknown_file.write(keyauthorization)
@@ -168,15 +170,15 @@ class ACMETiny(object):
             raise ValueError(error_message.format(wellknown_path, wellknown_url))
 
         # notify that the challenge is met
-        payload = {"keyAuthorization": keyauthorization}
-        self._send_signed_request(challenge['url'], payload, {200: "Challenge sent..."},
-                                  "Error triggering challenge: {code} {result}")
+        error_message = "Error triggering challenge: {code} {result}"
+        self._send_signed_request(challenge['url'], {"keyAuthorization": keyauthorization},
+                                  {200: "Challenge sent..."}, error_message)
         self._urlopen_retry(challenge['url'], 'pending', "Challenge did not pass: {result}")
         self.log.info("%s verified!", domain)
         os.remove(wellknown_path)
 
     def parse_account_key(self):
-        """Parse account key to get public key and thumbprint."""
+        """Parse account key to get public key."""
         self.log.info("Parsing account key...")
         result = _openssl("rsa", ["-in", self.paths['account_key'], "-noout", "-text"])
         pub_hex, pub_exp = re.search(
@@ -192,8 +194,6 @@ class ACMETiny(object):
                 "n": _b64(binascii.unhexlify(re.sub(r"(\s|:)", "", pub_hex).encode("utf-8")))
             }
         }
-        accountkey_json = json.dumps(self.header['jwk'], sort_keys=True, separators=(',', ':'))
-        self.thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf8')).digest())
 
     def register_account(self):
         """Register the account and obtain Key ID."""
@@ -206,17 +206,17 @@ class ACMETiny(object):
         self.kid = headers['Location']
         self.log.debug("Key ID: %s", self.kid)
 
-    def get_certificate(self):
+    def get_certificate(self, csr):
         """Get signed certificate."""
-        if self.thumbprint is None or self.header is None:
+        if self.header is None:
             self.parse_account_key()
         if self.kid is None:
             self.register_account()
 
-        self.log.debug("Creating new order from %s", self.paths['csr'])
+        self.log.debug("Creating new order from %s", csr)
         # find domains
         self.log.info("Parsing CSR...")
-        csr_dump = _openssl("req", ["-in", self.paths['csr'], "-noout", "-text"]).decode("utf8")
+        csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf8")
         domains = []
         common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
         if common_name is not None:
@@ -241,7 +241,7 @@ class ACMETiny(object):
         self.log.debug("Checking order to get finalize URL...")
         resp = urlopen(order_url)
         result = json.loads(resp.read().decode('utf8'))
-        payload = {"csr": _b64(_openssl("req", ["-in", self.paths['csr'], "-outform", "DER"]))}
+        payload = {"csr": _b64(_openssl("req", ["-in", csr, "-outform", "DER"]))}
         return_codes = {200: "Success!"}
         error_message = "Error POSTing to finalize URL: {code} {result}"
         self.log.info("POSTing CSR to finalize URL...")
@@ -287,9 +287,9 @@ def main(argv):
 
     args = parser.parse_args(argv)
 
-    acme = ACMETiny(args.account_key, args.csr, args.acme_dir, ca=args.ca)
+    acme = ACMETiny(args.account_key, args.acme_dir, ca=args.ca)
     acme.log.setLevel(args.quiet or acme.log.level)
-    acme.get_certificate()
+    acme.get_certificate(args.csr)
     with open(args.output, 'w') if args.output else sys.stdout as output:
         output.write(acme.certificate)
 
