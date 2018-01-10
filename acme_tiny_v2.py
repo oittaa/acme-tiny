@@ -29,7 +29,7 @@ DEFAULT_CA = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
 # helper function to base64 encode for jose spec
 def _b64(data):
-    return base64.urlsafe_b64encode(data).decode('utf8').rstrip('=')
+    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
 
 # helper function for openssl subprocess
 def _openssl(command, options, communicate=None):
@@ -40,23 +40,36 @@ def _openssl(command, options, communicate=None):
         raise IOError("OpenSSL Error: {0}".format(err))
     return out
 
+# helper function to parse domains from CSR
+def _parse_csr(csr):
+    csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf-8")
+    domains = []
+    common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
+    if common_name is not None:
+        domains.append({"type": "dns", "value": common_name.group(1)})
+    subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n",
+                                  csr_dump, re.MULTILINE|re.DOTALL)
+    if subject_alt_names is not None:
+        for san in subject_alt_names.group(1).split(", "):
+            if san.startswith("DNS:"):
+                domains.append({"type": "dns", "value": san[4:]})
+    return domains
 
 class ACMETiny(object):
     """ACMETiny implements a minimal client for the IETF Automatic Certificate
     Management Environment (ACME) protocol"""
 
     def __init__(self, account_key, acme_dir, ca=None, logger=None):
-        self.paths = {"account_key": account_key, "acme_dir": acme_dir}
-        self.kid = self.header = self.certificate = None
         if logger is None:
             log_format = '%(asctime)s - %(levelname)s - %(message)s'
             logging.basicConfig(format=log_format)
             logger = logging.getLogger(__name__)
             logger.setLevel(logging.INFO)
-        self.log = logger
+        self.account_key, self.acme_dir, self.log = account_key, acme_dir, logger
         resp = urlopen(ca or DEFAULT_CA)
-        self.directory = json.loads(resp.read().decode('utf8'))
+        self.directory = json.loads(resp.read().decode('utf-8'))
         self.nonce = resp.headers.get('Replay-Nonce')
+        self.kid = self.header = None
 
     # helper function for rate limited queries
     def _urlopen_retry(self, url, retry_type, error_message):
@@ -64,10 +77,10 @@ class ACMETiny(object):
             self.log.debug("Fetching: %s", url)
             try:
                 resp = urlopen(url)
-                result = json.loads(resp.read().decode('utf8'))
+                result = json.loads(resp.read().decode('utf-8'))
             except HTTPError as err:
                 raise ValueError("Error fetching url: {0} {1} {2}".format(
-                    url, err.code, json.loads(err.read().decode('utf8'))))
+                    url, err.code, json.loads(err.read().decode('utf-8'))))
             if result['status'] == retry_type:
                 self._retry_after_sleep(resp.info())
             elif result['status'] == 'valid':
@@ -89,7 +102,7 @@ class ACMETiny(object):
     def _send_signed_request(self, url_or_key, payload, return_codes, error_message):
         self.log.debug("Signed request url or key: %s", url_or_key)
         self.log.debug("Signed request payload: %s", payload)
-        payload = _b64(json.dumps(payload).encode('utf8'))
+        payload = _b64(json.dumps(payload).encode('utf-8'))
         while True:
             protected = copy.deepcopy(self.header)
             if url_or_key in self.directory:
@@ -105,21 +118,21 @@ class ACMETiny(object):
                 self.nonce = resp.headers.get('Replay-Nonce')
             protected['nonce'] = re.sub(r"[^A-Za-z0-9_\-]", "", self.nonce)
             protected['url'] = url
-            protected = _b64(json.dumps(protected).encode('utf8'))
-            sig = _b64(_openssl("dgst", ["-sha256", "-sign", self.paths['account_key']],
-                                communicate="{0}.{1}".format(protected, payload).encode("utf8")))
+            protected = _b64(json.dumps(protected).encode('utf-8'))
+            sig = _b64(_openssl("dgst", ["-sha256", "-sign", self.account_key],
+                                communicate="{0}.{1}".format(protected, payload).encode("utf-8")))
             data = json.dumps({"protected": protected, "payload": payload, "signature": sig})
 
             try:
-                resp = urlopen(url, data.encode('utf8'))
-                code, result = resp.getcode(), resp.read().decode('utf8')
+                resp = urlopen(url, data.encode('utf-8'))
+                code, result = resp.getcode(), resp.read().decode('utf-8')
                 headers, message = resp.info(), return_codes[code]
                 if headers.get('Content-Type') and 'json' in headers.get('Content-Type'):
                     result = json.loads(result)
                 self.nonce = headers.get('Replay-Nonce')
                 break
             except HTTPError as err:
-                code, result, headers = err.code, json.loads(err.read().decode('utf8')), err.info()
+                code, result, headers = err.code, json.loads(err.read().decode('utf-8')), err.info()
                 self.nonce = headers.get('Replay-Nonce')
                 if code == 400 and result.get('type') == 'urn:ietf:params:acme:error:badNonce':
                     self.log.warning("badNonce: retrying...")
@@ -135,15 +148,27 @@ class ACMETiny(object):
             self.log.info(message)
         return result, headers
 
+    # helper funtion to check that the well-known file is in place
+    def _well_known_check(self, wellknown_path, keyauthorization, domain, token):
+        wellknown_url = "http://{0}/.well-known/acme-challenge/{1}".format(domain, token)
+        try:
+            resp = urlopen(wellknown_url)
+            resp_data = resp.read().decode('utf-8').strip()
+            assert resp_data == keyauthorization
+            self.log.debug("Found token from %s", wellknown_url)
+        except (IOError, AssertionError):
+            error_message = "Wrote file to {0}, but couldn't download {1}"
+            raise ValueError(error_message.format(wellknown_path, wellknown_url))
+
     # helper function to make authorization requests
-    def _authz(self, url):
+    def _authz(self, url, skip_well_known_check):
         self.log.debug("Authz: %s", url)
         try:
             resp = urlopen(url)
-            resp_data = json.loads(resp.read().decode('utf8'))
+            resp_data = json.loads(resp.read().decode('utf-8'))
         except HTTPError as err:
             error_message = "Error getting authz: {0} {1}"
-            raise ValueError(error_message.format(err.code, json.loads(err.read().decode('utf8'))))
+            raise ValueError(error_message.format(err.code, json.loads(err.read().decode('utf-8'))))
         domain = resp_data['identifier']['value']
         self.log.info("Verifying %s...", domain)
 
@@ -151,38 +176,30 @@ class ACMETiny(object):
         challenge = [c for c in resp_data['challenges'] if c['type'] == "http-01"][0]
         token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
         accountkey_json = json.dumps(self.header['jwk'], sort_keys=True, separators=(',', ':'))
-        thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf8')).digest())
+        thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf-8')).digest())
         keyauthorization = "{0}.{1}".format(token, thumbprint)
-        wellknown_path = os.path.join(self.paths['acme_dir'], token)
+        wellknown_path = os.path.join(self.acme_dir, token)
         with open(wellknown_path, "w") as wellknown_file:
             wellknown_file.write(keyauthorization)
-
-        # check that the file is in place
-        wellknown_url = "http://{0}/.well-known/acme-challenge/{1}".format(domain, token)
         try:
-            resp = urlopen(wellknown_url)
-            resp_data = resp.read().decode('utf8').strip()
-            assert resp_data == keyauthorization
-        except (IOError, AssertionError):
+            if not skip_well_known_check:
+                self._well_known_check(wellknown_path, keyauthorization, domain, token)
+            # notify that the challenge is met
+            error_message = "Error triggering challenge: {code} {result}"
+            self._send_signed_request(challenge['url'], {"keyAuthorization": keyauthorization},
+                                      {200: "Challenge sent..."}, error_message)
+            self._urlopen_retry(challenge['url'], 'pending', "Challenge did not pass: {result}")
+            self.log.info("%s verified!", domain)
+        finally:
             os.remove(wellknown_path)
-            error_message = "Wrote file to {0}, but couldn't download {1}"
-            raise ValueError(error_message.format(wellknown_path, wellknown_url))
-
-        # notify that the challenge is met
-        error_message = "Error triggering challenge: {code} {result}"
-        self._send_signed_request(challenge['url'], {"keyAuthorization": keyauthorization},
-                                  {200: "Challenge sent..."}, error_message)
-        self._urlopen_retry(challenge['url'], 'pending', "Challenge did not pass: {result}")
-        self.log.info("%s verified!", domain)
-        os.remove(wellknown_path)
 
     def parse_account_key(self):
         """Parse account key to get public key."""
         self.log.info("Parsing account key...")
-        result = _openssl("rsa", ["-in", self.paths['account_key'], "-noout", "-text"])
+        result = _openssl("rsa", ["-in", self.account_key, "-noout", "-text"])
         pub_hex, pub_exp = re.search(
             r"modulus:\n\s+00:([a-f0-9\:\s]+?)\npublicExponent: ([0-9]+)",
-            result.decode('utf8'), re.MULTILINE | re.DOTALL).groups()
+            result.decode('utf-8'), re.MULTILINE | re.DOTALL).groups()
         pub_exp = "{0:x}".format(int(pub_exp))
         pub_exp = "0{0}".format(pub_exp) if len(pub_exp) % 2 else pub_exp
         self.header = {
@@ -205,41 +222,28 @@ class ACMETiny(object):
         self.kid = headers['Location']
         self.log.debug("Key ID: %s", self.kid)
 
-    def get_certificate(self, csr):
-        """Get signed certificate."""
+    def get_certificate(self, csr, skip_well_known_check=False):
+        """Get signed certificate from CSR."""
         if self.header is None:
             self.parse_account_key()
         if self.kid is None:
             self.register_account()
 
         self.log.debug("Creating new order from %s", csr)
-        # find domains
         self.log.info("Parsing CSR...")
-        csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf8")
-        domains = []
-        common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
-        if common_name is not None:
-            domains.append({"type": "dns", "value": common_name.group(1)})
-        subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n",
-                                      csr_dump, re.MULTILINE|re.DOTALL)
-        if subject_alt_names is not None:
-            for san in subject_alt_names.group(1).split(", "):
-                if san.startswith("DNS:"):
-                    domains.append({"type": "dns", "value": san[4:]})
+        domains = _parse_csr(csr)
         payload = {"identifiers": domains}
         return_codes = {201: "Success!"}
         error_message = "Error requesting order: {code} {result}"
         self.log.info("Sending newOrder request...")
         result, headers = self._send_signed_request("newOrder", payload,
                                                     return_codes, error_message)
-
         order_url = headers['Location']
         for auth_url in result['authorizations']:
-            self._authz(auth_url)
-
+            self._authz(auth_url, skip_well_known_check)
         self.log.debug("Checking order to get finalize URL...")
         resp = urlopen(order_url)
-        result = json.loads(resp.read().decode('utf8'))
+        result = json.loads(resp.read().decode('utf-8'))
         payload = {"csr": _b64(_openssl("req", ["-in", csr, "-outform", "DER"]))}
         return_codes = {200: "Success!"}
         error_message = "Error POSTing to finalize URL: {code} {result}"
@@ -247,9 +251,7 @@ class ACMETiny(object):
         self._send_signed_request(result['finalize'], payload, return_codes, error_message)
         result = self._urlopen_retry(order_url, 'processing', "Order isn't valid: {result}")
         self.log.debug("Downloading certificate: %s", result['certificate'])
-        self.certificate = urlopen(result['certificate']).read().decode('utf8')
-        self.log.info("Certificate signed!")
-
+        return urlopen(result['certificate']).read().decode('utf-8')
 
 def main(argv):
     """Parse command line arguments and feed them to ACMETiny."""
@@ -283,14 +285,16 @@ def main(argv):
                         help="certificate authority's directory object, default is Let's Encrypt")
     parser.add_argument("--output", "-o", metavar="FILE", default=None,
                         help="output file, default is standard output")
+    parser.add_argument("--skip-well-known-check", action="store_true",
+                        help="Skip the local http check of /.well-known/acme-challenge/")
 
     args = parser.parse_args(argv)
 
     acme = ACMETiny(args.account_key, args.acme_dir, ca=args.ca)
     acme.log.setLevel(args.quiet or acme.log.level)
-    acme.get_certificate(args.csr)
+    certificate = acme.get_certificate(args.csr, args.skip_well_known_check)
     with open(args.output, 'w') if args.output else sys.stdout as output:
-        output.write(acme.certificate)
+        output.write(certificate)
 
 if __name__ == "__main__":  # pragma: no cover
     main(sys.argv[1:])
