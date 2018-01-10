@@ -47,7 +47,6 @@ class ACMETiny(object):
 
     def __init__(self, account_key, acme_dir, ca=None, logger=None):
         self.paths = {"account_key": account_key, "acme_dir": acme_dir}
-        self.paths['acme_ca'] = ca or DEFAULT_CA
         self.kid = self.header = self.certificate = None
         if logger is None:
             log_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -55,7 +54,7 @@ class ACMETiny(object):
             logger = logging.getLogger(__name__)
             logger.setLevel(logging.INFO)
         self.log = logger
-        resp = urlopen(self.paths['acme_ca'])
+        resp = urlopen(ca or DEFAULT_CA)
         self.directory = json.loads(resp.read().decode('utf8'))
         self.nonce = resp.headers.get('Replay-Nonce')
 
