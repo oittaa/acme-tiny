@@ -40,20 +40,20 @@ def _openssl(command, options, communicate=None):
         raise IOError("OpenSSL Error: {0}".format(err))
     return out
 
-# helper function to parse domains from CSR
+# helper function to parse domain identifiers from CSR
 def _parse_csr(csr):
     csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf-8")
-    domains = []
+    identifiers = []
     common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
     if common_name is not None:
-        domains.append({"type": "dns", "value": common_name.group(1)})
+        identifiers.append({"type": "dns", "value": common_name.group(1)})
     subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n",
                                   csr_dump, re.MULTILINE|re.DOTALL)
     if subject_alt_names is not None:
         for san in subject_alt_names.group(1).split(", "):
             if san.startswith("DNS:"):
-                domains.append({"type": "dns", "value": san[4:]})
-    return domains
+                identifiers.append({"type": "dns", "value": san[4:]})
+    return identifiers
 
 class ACMETiny(object):
     """ACMETiny implements a minimal client for the IETF Automatic Certificate
@@ -231,8 +231,7 @@ class ACMETiny(object):
 
         self.log.debug("Creating new order from %s", csr)
         self.log.info("Parsing CSR...")
-        domains = _parse_csr(csr)
-        payload = {"identifiers": domains}
+        payload = {"identifiers": _parse_csr(csr)}
         return_codes = {201: "Success!"}
         error_message = "Error requesting order: {code} {result}"
         self.log.info("Sending newOrder request...")
@@ -241,9 +240,6 @@ class ACMETiny(object):
         order_url = headers['Location']
         for auth_url in result['authorizations']:
             self._authz(auth_url, skip_well_known_check)
-        self.log.debug("Checking order to get finalize URL...")
-        resp = urlopen(order_url)
-        result = json.loads(resp.read().decode('utf-8'))
         payload = {"csr": _b64(_openssl("req", ["-in", csr, "-outform", "DER"]))}
         return_codes = {200: "Success!"}
         error_message = "Error POSTing to finalize URL: {code} {result}"
@@ -286,7 +282,7 @@ def main(argv):
     parser.add_argument("--output", "-o", metavar="FILE", default=None,
                         help="output file, default is standard output")
     parser.add_argument("--skip-well-known-check", action="store_true",
-                        help="Skip the local http check of /.well-known/acme-challenge/")
+                        help="skip the local http check of /.well-known/acme-challenge/")
 
     args = parser.parse_args(argv)
 
