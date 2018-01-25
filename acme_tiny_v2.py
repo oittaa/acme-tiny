@@ -24,8 +24,8 @@ try:
 except ImportError:
     from urllib2 import urlopen, HTTPError  # Python 2
 
-DEFAULT_CA = "https://acme-staging-v02.api.letsencrypt.org/directory"
-# DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
+# DEFAULT_CA = "https://acme-staging-v02.api.letsencrypt.org/directory"
+DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
 
 # helper function to base64 encode for jose spec
 def _b64(data):
@@ -40,20 +40,20 @@ def _openssl(command, options, communicate=None):
         raise IOError("OpenSSL Error: {0}".format(err))
     return out
 
-# helper function to parse domain identifiers from CSR
-def _parse_csr(csr):
+# helper function to parse domains from CSR
+def _domains_from_csr(csr):
     csr_dump = _openssl("req", ["-in", csr, "-noout", "-text"]).decode("utf-8")
-    identifiers = []
+    domains = []
     common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", csr_dump)
     if common_name is not None:
-        identifiers.append({"type": "dns", "value": common_name.group(1)})
+        domains.append(common_name.group(1))
     subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n",
                                   csr_dump, re.MULTILINE|re.DOTALL)
     if subject_alt_names is not None:
         for san in subject_alt_names.group(1).split(", "):
             if san.startswith("DNS:"):
-                identifiers.append({"type": "dns", "value": san[4:]})
-    return identifiers
+                domains.append(san[4:])
+    return domains
 
 class ACMETiny(object):
     """ACMETiny implements a minimal client for the IETF Automatic Certificate
@@ -106,7 +106,7 @@ class ACMETiny(object):
         while True:
             protected = copy.deepcopy(self.header)
             if url_or_key in self.directory:
-                url = self.directory[url_or_key]  # Use the URL from the /directory response
+                url = self.directory[url_or_key]  # Use the URL from the directory response
             else:
                 url = url_or_key
             if url_or_key not in ['newAccount', 'revokeCert']:
@@ -231,7 +231,7 @@ class ACMETiny(object):
 
         self.log.debug("Creating new order from %s", csr)
         self.log.info("Parsing CSR...")
-        payload = {"identifiers": _parse_csr(csr)}
+        payload = {"identifiers": [{"type": "dns", "value": d} for d in _domains_from_csr(csr)]}
         return_codes = {201: "Success!"}
         error_message = "Error requesting order: {code} {result}"
         self.log.info("Sending newOrder request...")
@@ -282,7 +282,7 @@ def main(argv):
     parser.add_argument("--output", "-o", metavar="FILE", default=None,
                         help="output file, default is standard output")
     parser.add_argument("--skip-well-known-check", action="store_true",
-                        help="skip the local http check of /.well-known/acme-challenge/")
+                        help="skip the local http check of .well-known/acme-challenge/")
 
     args = parser.parse_args(argv)
 
