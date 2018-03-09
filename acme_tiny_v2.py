@@ -19,10 +19,10 @@ import textwrap
 import time
 
 try:
-    from urllib.request import urlopen  # Python 3
+    from urllib.request import urlopen, Request  # Python 3
     from urllib.error import HTTPError
 except ImportError:
-    from urllib2 import urlopen, HTTPError  # Python 2
+    from urllib2 import urlopen, HTTPError, Request  # Python 2
 
 # DEFAULT_CA = "https://acme-staging-v02.api.letsencrypt.org/directory"
 DEFAULT_CA = "https://acme-v02.api.letsencrypt.org/directory"
@@ -121,10 +121,11 @@ class ACMETiny(object):
             protected = _b64(json.dumps(protected).encode('utf-8'))
             sig = _b64(_openssl("dgst", ["-sha256", "-sign", self.account_key],
                                 communicate="{0}.{1}".format(protected, payload).encode("utf-8")))
-            data = json.dumps({"protected": protected, "payload": payload, "signature": sig})
+            data = json.dumps({"protected": protected, "payload": payload,
+                               "signature": sig}).encode('utf-8')
 
             try:
-                resp = urlopen(url, data.encode('utf-8'))
+                resp = urlopen(Request(url, data, {'Content-Type':'application/jose+json'}))
                 code, result = resp.getcode(), resp.read().decode('utf-8')
                 headers, message = resp.info(), return_codes[code]
                 if headers.get('Content-Type') and 'json' in headers.get('Content-Type'):
@@ -186,7 +187,7 @@ class ACMETiny(object):
                 self._well_known_check(wellknown_path, keyauthorization, domain, token)
             # notify that the challenge is met
             error_message = "Error triggering challenge: {code} {result}"
-            self._send_signed_request(challenge['url'], {"keyAuthorization": keyauthorization},
+            self._send_signed_request(challenge['url'], {},
                                       {200: "Challenge sent..."}, error_message)
             self._urlopen_retry(challenge['url'], 'pending', "Challenge did not pass: {result}")
             self.log.info("%s verified!", domain)
