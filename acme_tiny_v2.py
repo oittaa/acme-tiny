@@ -69,7 +69,7 @@ class ACMETiny(object):
         resp = urlopen(ca or DEFAULT_CA)
         self.directory = json.loads(resp.read().decode('utf-8'))
         self.nonce = resp.headers.get('Replay-Nonce')
-        self.kid = self.header = None
+        self.account = {'kid': None, 'header': None, 'thumbprint': None}
 
     # helper function for rate limited queries
     def _urlopen_retry(self, url, retry_type, error_message):
@@ -99,19 +99,15 @@ class ACMETiny(object):
         time.sleep(retry_after)
 
     # helper function to make signed requests
-    def _send_signed_request(self, url_or_key, payload, return_codes, error_message):
-        self.log.debug("Signed request url or key: %s", url_or_key)
+    def _send_signed_request(self, url, payload, return_codes, error_message):
+        self.log.debug("Signed request url: %s", url)
         self.log.debug("Signed request payload: %s", payload)
         payload = _b64(json.dumps(payload).encode('utf-8'))
         while True:
-            protected = copy.deepcopy(self.header)
-            if url_or_key in self.directory:
-                url = self.directory[url_or_key]  # Use the URL from the directory response
-            else:
-                url = url_or_key
-            if url_or_key not in ['newAccount', 'revokeCert']:
+            protected = copy.deepcopy(self.account['header'])
+            if url not in [self.directory['newAccount'], self.directory['revokeCert']]:
                 del protected['jwk']
-                protected['kid'] = self.kid
+                protected['kid'] = self.account['kid']
             if self.nonce is None:
                 self.log.debug("Nonce from newNonce resource: %s", self.directory['newNonce'])
                 resp = urlopen(self.directory['newNonce'])
@@ -150,8 +146,7 @@ class ACMETiny(object):
         return result, headers
 
     # helper funtion to check that the well-known file is in place
-    def _well_known_check(self, wellknown_path, keyauthorization, domain, token):
-        wellknown_url = "http://{0}/.well-known/acme-challenge/{1}".format(domain, token)
+    def _well_known_check(self, wellknown_url, wellknown_path, keyauthorization):
         try:
             resp = urlopen(wellknown_url)
             resp_data = resp.read().decode('utf-8').strip()
@@ -176,15 +171,14 @@ class ACMETiny(object):
         # make the challenge file
         challenge = [c for c in resp_data['challenges'] if c['type'] == "http-01"][0]
         token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
-        accountkey_json = json.dumps(self.header['jwk'], sort_keys=True, separators=(',', ':'))
-        thumbprint = _b64(hashlib.sha256(accountkey_json.encode('utf-8')).digest())
-        keyauthorization = "{0}.{1}".format(token, thumbprint)
+        keyauthorization = "{0}.{1}".format(token, self.account['thumbprint'])
         wellknown_path = os.path.join(self.acme_dir, token)
         with open(wellknown_path, "w") as wellknown_file:
             wellknown_file.write(keyauthorization)
         try:
             if not skip_well_known_check:
-                self._well_known_check(wellknown_path, keyauthorization, domain, token)
+                wellknown_url = "http://{0}/.well-known/acme-challenge/{1}".format(domain, token)
+                self._well_known_check(wellknown_url, wellknown_path, keyauthorization)
             # notify that the challenge is met
             error_message = "Error triggering challenge: {code} {result}"
             self._send_signed_request(challenge['url'], {},
@@ -203,7 +197,7 @@ class ACMETiny(object):
             result.decode('utf-8'), re.MULTILINE | re.DOTALL).groups()
         pub_exp = "{0:x}".format(int(pub_exp))
         pub_exp = "0{0}".format(pub_exp) if len(pub_exp) % 2 else pub_exp
-        self.header = {
+        header = {
             "alg": "RS256",
             "jwk": {
                 "e": _b64(binascii.unhexlify(pub_exp.encode("utf-8"))),
@@ -211,6 +205,9 @@ class ACMETiny(object):
                 "n": _b64(binascii.unhexlify(re.sub(r"(\s|:)", "", pub_hex).encode("utf-8")))
             }
         }
+        accountkey_json = json.dumps(header['jwk'], sort_keys=True, separators=(',', ':'))
+        self.account['thumbprint'] = _b64(hashlib.sha256(accountkey_json.encode('utf-8')).digest())
+        self.account['header'] = header
 
     def register_account(self):
         """Register the account and obtain Key ID."""
@@ -218,16 +215,16 @@ class ACMETiny(object):
         payload = {"termsOfServiceAgreed": True}
         return_codes = {201: "Registered!", 200: "Already registered!"}
         error_message = "Error registering: {code} {result}"
-        _result, headers = self._send_signed_request("newAccount", payload,
+        _result, headers = self._send_signed_request(self.directory['newAccount'], payload,
                                                      return_codes, error_message)
-        self.kid = headers['Location']
-        self.log.debug("Key ID: %s", self.kid)
+        self.account['kid'] = headers['Location']
+        self.log.debug("Key ID: %s", self.account['kid'])
 
     def get_certificate(self, csr, skip_well_known_check=False):
         """Get signed certificate from CSR."""
-        if self.header is None:
+        if self.account['header'] is None:
             self.parse_account_key()
-        if self.kid is None:
+        if self.account['kid'] is None:
             self.register_account()
 
         self.log.debug("Creating new order from %s", csr)
@@ -236,7 +233,7 @@ class ACMETiny(object):
         return_codes = {201: "Success!"}
         error_message = "Error requesting order: {code} {result}"
         self.log.info("Sending newOrder request...")
-        result, headers = self._send_signed_request("newOrder", payload,
+        result, headers = self._send_signed_request(self.directory['newOrder'], payload,
                                                     return_codes, error_message)
         order_url = headers['Location']
         for auth_url in result['authorizations']:
