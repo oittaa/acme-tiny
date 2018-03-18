@@ -229,7 +229,9 @@ class ACMETiny(object):
 
         self.log.debug("Creating new order from %s", csr)
         self.log.info("Parsing CSR...")
-        payload = {"identifiers": [{"type": "dns", "value": d} for d in _domains_from_csr(csr)]}
+        domains = _domains_from_csr(csr)
+        self.log.info("Found domains: %s", "{0}".format(", ".join(domains)))
+        payload = {"identifiers": [{"type": "dns", "value": d} for d in domains]}
         return_codes = {201: "Success!"}
         error_message = "Error requesting order: {code} {result}"
         self.log.info("Sending newOrder request...")
